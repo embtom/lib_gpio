@@ -195,15 +195,21 @@ int gpio_access__pin_close(struct gpio_access *_hdl)
  * ******************************************************************/
 int gpio_access__write( struct gpio_access *_hdl, unsigned int _value)
 {
+	int ret = EOK;
 
-	if (_value)
-		write(_hdl->pinFD, "1", 2);
-	else
-		write(_hdl->pinFD, "0", 2);
+	if (_value) {
+		ret = write(_hdl->pinFD, "1", 2);
+	}
+	else {
+		ret = write(_hdl->pinFD, "0", 2);
+	}
 
 	lseek(_hdl->pinFD, 0, SEEK_SET);
+	if (ret == -1) {
+		return -ESTD_IO;
+	}
 
-	return EOK;
+	return ret;
 }
 
 /* *******************************************************************
@@ -218,18 +224,23 @@ int gpio_access__write( struct gpio_access *_hdl, unsigned int _value)
  * ******************************************************************/
 int gpio_access__read( struct gpio_access *_hdl, unsigned int *_value)
 {
+	int ret = EOK;
 	char ch;
 
-	read(_hdl->pinFD, &ch, 1);
+	ret = read(_hdl->pinFD, &ch, 1);
 	lseek(_hdl->pinFD, 0, SEEK_SET);
 
-	if (ch != '0') {
-		*_value = 1;
-	} else {
-		*_value = 0;
+	if (ret == -1) {
+		ret = -ESTD_IO;
 	}
-
-	return 0;
+	else {
+		if (ch != '0') {
+			*_value = 1;
+		} else {
+			*_value = 0;
+		}	
+	}
+	return ret;
 }
 
 /* *******************************************************************
@@ -244,43 +255,29 @@ int gpio_access__read( struct gpio_access *_hdl, unsigned int *_value)
  * ******************************************************************/
 int gpio_access__toggle( struct gpio_access *_hdl)
 {
+	int ret = EOK;
 	char value;
 
-	read(_hdl->pinFD, &value, 1);
+	ret = read(_hdl->pinFD, &value, 1);
 	lseek(_hdl->pinFD, 0, SEEK_SET);
 
-	if (value != '0')
-		write(_hdl->pinFD, "0", 2);
-	else
-		write(_hdl->pinFD, "1", 2);
-
-	lseek(_hdl->pinFD, 0, SEEK_SET);
-
-	return EOK;
+	if (ret == -1) {
+		ret = -ESTD_IO;
+	}
+	else {
+		if (value != '0') {
+			ret = write(_hdl->pinFD, "0", 2);
+		}
+		else {
+			ret = write(_hdl->pinFD, "1", 2);
+		}
+		lseek(_hdl->pinFD, 0, SEEK_SET);
+		if(ret == -1) {
+			ret = -ESTD_IO;
+		}
+	}
+	return ret;
 }
-
-
-/* *******************************************************************
- * static function definitions
- * ******************************************************************/
-
-static unsigned int s_epollFd;
-static thread_hdl_t s_eventThd;
-
-
-static int gpio_access__init_event_driven_input()
-{
-	int ret;
-	s_epollFd = epoll_create(1);
-
-	//ret = lib_thread__create(s_eventThd,)
-
-
-}
-
-
-
-
 
 /* *******************************************************************
  * \brief	Export of the gpio pin to userspace
@@ -293,18 +290,19 @@ static int gpio_access__init_event_driven_input()
  * ******************************************************************/
 static int gpio_access__export(unsigned int _gpio)
 {
-	int fd, len;
+	int fd, len, ret = EOK;
 	char buf[MAX_BUF];
 
 	fd = open(SYSFS_GPIO_DIR "/export", O_WRONLY);
 	if (fd < 0) {
-		//msg()
-		//msg (LOG_LEVEL_error, LIB_THREAD_MODULE_ID, "lib_thread__init : failed with retval %i\n", ret );
 		return -errno;
 	}
 
 	len = snprintf(buf, sizeof(buf), "%d", _gpio);
-	write(fd, buf, len);
+	ret = write(fd, buf, len);
+	if (ret == -1) {
+		ret = -ESTD_IO;
+	}
 	close(fd);
 
 	return 0;
@@ -321,7 +319,7 @@ static int gpio_access__export(unsigned int _gpio)
  * ******************************************************************/
 static int gpio_access__unexport(unsigned int _gpio)
 {
-	int fd, len;
+	int fd, len, ret = EOK;
 	char buf[MAX_BUF];
 
 	fd = open(SYSFS_GPIO_DIR "/unexport", O_WRONLY);
@@ -330,7 +328,10 @@ static int gpio_access__unexport(unsigned int _gpio)
 	}
 
 	len = snprintf(buf, sizeof(buf), "%d", _gpio);
-	write(fd, buf, len);
+	ret = write(fd, buf, len);
+	if (ret == -1) {
+		ret = -ESTD_IO;
+	}
 	close(fd);
 	return 0;
 }
@@ -347,8 +348,7 @@ static int gpio_access__unexport(unsigned int _gpio)
  * ******************************************************************/
 static int gpio_access__set_dir(unsigned int _gpio, enum gpio_dir _mode)
 {
-	int fd, len;
-	int ret = EOK;
+	int fd, len, ret = EOK;
 	char buf[MAX_BUF];
 
 	len = snprintf(buf, sizeof(buf), SYSFS_GPIO_DIR  "/gpio%d/direction", _gpio);
@@ -360,9 +360,12 @@ static int gpio_access__set_dir(unsigned int _gpio, enum gpio_dir _mode)
 
 	switch (_mode)
 	{
-		case GPIO_DIR_input : write(fd, "in", 3); break;
-		case GPIO_DIR_output : write(fd, "out", 4); break;
+		case GPIO_DIR_input : ret = write(fd, "in", 3); break;
+		case GPIO_DIR_output : ret = write(fd, "out", 4); break;
 		default: ret = -EINVAL; break;
+	}
+	if (ret == -1) {
+		ret = -ESTD_IO;
 	}
 
 	close(fd);
@@ -399,11 +402,15 @@ static int gpio_access__set_event(unsigned int _gpio, enum gpio_event _event)
 
 	switch (_event)
 	{
-		case GPIO_EVENT_none: write(fd, "none", 5); break;
-		case GPIO_EVENT_rising: write(fd, "rising", 7); break;
-		case GPIO_EVENT_falling: write(fd, "falling", 8); break;
-		case GPIO_EVENT_rising_falling: write(fd, "both", 5); break;
+		case GPIO_EVENT_none: ret = write(fd, "none", 5); break;
+		case GPIO_EVENT_rising: ret = write(fd, "rising", 7); break;
+		case GPIO_EVENT_falling: ret = write(fd, "falling", 8); break;
+		case GPIO_EVENT_rising_falling: ret = write(fd, "both", 5); break;
 		default: ret = -EINVAL; break;
+	}
+
+	if (ret == -1) {
+		ret = -ESTD_IO;
 	}
 
 	close(fd);
